@@ -1,8 +1,4 @@
-mod cert;
-mod discovery;
-mod pairing;
-mod tls;
-mod trust;
+mod identity;
 
 use protocol::identity::Identity;
 
@@ -10,23 +6,30 @@ use protocol::identity::Identity;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("failed to install rustls crypto provider");
+    let device_identity = identity::load_or_generate()?;
 
-    let (device_id, device_cert) = cert::load_or_generate()?;
-    let my_cert_der = device_cert.cert_der.clone();
-    let acceptor = tls::make_acceptor(device_cert.cert_der, device_cert.key_der)?;
-
-    let my_identity = Identity {
-        device_id: device_id.clone(),
+    let _my_identity = Identity {
+        device_id: device_identity.device_id.clone(),
         device_name: "Shubh's Desktop".to_string(),
         device_type: "desktop".to_string(),
-        protocol_version: 8,
-        tcp_port: 1716,
+        protocol_version: 1,
+        tcp_port: 0,
         incoming_capabilities: vec![],
         outgoing_capabilities: vec![],
     };
 
-    discovery::run(my_identity, acceptor, my_cert_der).await
+    println!(
+        "device_id: {}",
+        device_identity.device_id
+    );
+    println!(
+        "ed25519_pub: {}",
+        hex::encode(device_identity.ed25519_verifying.as_bytes())
+    );
+    println!(
+        "x25519_pub: {}",
+        hex::encode(device_identity.x25519_public)
+    );
+
+    Ok(())
 }
