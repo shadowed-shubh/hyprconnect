@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["KDECONNECT_PORT"],"mod":["identity","packet"]};
