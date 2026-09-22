@@ -30,58 +30,66 @@ async fn write_frame(stream: &mut TcpStream, data: &[u8]) -> Result<()> {
 // Runs the Noise_XX handshake as the INITIATOR — the side that dials
 // out. Unlike TLS, there's no role confusion here: whoever calls
 // connect() naturally becomes the Noise initiator, no reversal needed.
+// Replace the return type and final lines of handshake_as_initiator:
 pub async fn handshake_as_initiator(
     stream: &mut TcpStream,
     static_secret: &[u8; 32],
-) -> Result<TransportState> {
+) -> Result<(TransportState, [u8; 32])> {
     let mut handshake: HandshakeState = Builder::new(NOISE_PARAMS.parse()?)
         .local_private_key(static_secret)
         .build_initiator()?;
 
-    // Noise_XX is a 3-message handshake: -> e, <- e ee s es, -> s se
     let mut buf = vec![0u8; 1024];
 
-    // Message 1: we send our ephemeral key.
     let len = handshake.write_message(&[], &mut buf)?;
     write_frame(stream, &buf[..len]).await?;
 
-    // Message 2: receive their ephemeral + static key.
     let msg2 = read_frame(stream).await?;
     handshake.read_message(&msg2, &mut buf)?;
 
-    // Message 3: send our static key, finishing the handshake.
     let len = handshake.write_message(&[], &mut buf)?;
     write_frame(stream, &buf[..len]).await?;
 
-    Ok(handshake.into_transport_mode()?)
+    // Capture the peer's authenticated static key BEFORE converting
+    // to transport mode — this is what pairing fingerprints are
+    // built from, no separate identity exchange needed.
+    let remote_pub: [u8; 32] = handshake
+        .get_remote_static()
+        .context("no remote static key after handshake")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("remote static key wrong length"))?;
+
+    Ok((handshake.into_transport_mode()?, remote_pub))
 }
 
-// Same handshake, RESPONDER side — whoever accepted the connection.
+// Same change for handshake_as_responder:
 pub async fn handshake_as_responder(
     stream: &mut TcpStream,
     static_secret: &[u8; 32],
-) -> Result<TransportState> {
+) -> Result<(TransportState, [u8; 32])> {
     let mut handshake: HandshakeState = Builder::new(NOISE_PARAMS.parse()?)
         .local_private_key(static_secret)
         .build_responder()?;
 
     let mut buf = vec![0u8; 1024];
 
-    // Message 1: receive their ephemeral key.
     let msg1 = read_frame(stream).await?;
     handshake.read_message(&msg1, &mut buf)?;
 
-    // Message 2: send our ephemeral + static key.
     let len = handshake.write_message(&[], &mut buf)?;
     write_frame(stream, &buf[..len]).await?;
 
-    // Message 3: receive their static key, finishing the handshake.
     let msg3 = read_frame(stream).await?;
     handshake.read_message(&msg3, &mut buf)?;
 
-    Ok(handshake.into_transport_mode()?)
-}
+    let remote_pub: [u8; 32] = handshake
+        .get_remote_static()
+        .context("no remote static key after handshake")?
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("remote static key wrong length"))?;
 
+    Ok((handshake.into_transport_mode()?, remote_pub))
+}
 // Once handshake is done, use these to send/receive real packets —
 // encrypts/decrypts, and reuses the same length-prefix framing.
 pub async fn send_encrypted(

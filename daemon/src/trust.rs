@@ -1,8 +1,3 @@
-// Keeps track of which devices we've paired with before, so we
-// don't ask to pair again every time we reconnect. "Trust" here
-// means: we've seen this exact certificate before, tied to this
-// device ID, and a human already accepted it once.
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -12,15 +7,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustedDevice {
-    pub device_id: String,
     pub device_name: String,
-    // Certificates are raw bytes; hex is just a readable way to
-    // store bytes in a JSON text file.
-    pub cert_der_hex: String,
+    pub x25519_pub_hex: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct TrustStore {
+    // Keyed by the peer's x25519 public key, hex-encoded — this is
+    // what the Noise handshake actually authenticates, so it's the
+    // right identity anchor, not device_id (which is just a label
+    // a peer could technically change).
     devices: HashMap<String, TrustedDevice>,
 }
 
@@ -47,22 +43,18 @@ fn save(store: &TrustStore) -> Result<()> {
     Ok(())
 }
 
-pub fn is_trusted(device_id: &str, cert_der: &[u8]) -> bool {
+pub fn is_trusted(remote_pub: &[u8; 32]) -> bool {
     let Ok(store) = load() else { return false };
-    match store.devices.get(device_id) {
-        Some(d) => d.cert_der_hex == hex::encode(cert_der),
-        None => false,
-    }
+    store.devices.contains_key(&hex::encode(remote_pub))
 }
 
-pub fn add_trusted(device_id: &str, device_name: &str, cert_der: &[u8]) -> Result<()> {
+pub fn add_trusted(remote_pub: &[u8; 32], device_name: &str) -> Result<()> {
     let mut store = load()?;
     store.devices.insert(
-        device_id.to_string(),
+        hex::encode(remote_pub),
         TrustedDevice {
-            device_id: device_id.to_string(),
             device_name: device_name.to_string(),
-            cert_der_hex: hex::encode(cert_der),
+            x25519_pub_hex: hex::encode(remote_pub),
         },
     );
     save(&store)

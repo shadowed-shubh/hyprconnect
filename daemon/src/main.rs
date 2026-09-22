@@ -1,9 +1,13 @@
 mod discovery;
+mod packet;
 mod identity;
 mod noise;
+mod pairing;
+mod session;
+mod trust;
 
 use discovery::DiscoveryIdentity;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -12,8 +16,6 @@ async fn main() -> anyhow::Result<()> {
 
     println!("device_id: {}", device_identity.device_id);
 
-    // Bind to port 0 — let the OS pick a free port, avoiding the
-    // hardcoded-port collision problem entirely.
     let listener = TcpListener::bind("0.0.0.0:0").await?;
     let real_port = listener.local_addr()?.port();
     println!("listening on port {}", real_port);
@@ -26,36 +28,36 @@ async fn main() -> anyhow::Result<()> {
         port: real_port,
     };
 
-    // Spawn discovery in the background so it doesn't block us from
-    // also accepting connections below.
-    tokio::spawn(discovery::run(discovery_identity));
+    let secret = device_identity.x25519_secret.to_bytes();
+    let my_pub = device_identity.x25519_public;
 
-    // Accept one incoming connection and act as Noise responder.
-    tokio::spawn({
-        let secret = device_identity.x25519_secret.to_bytes();
-        async move {
-            loop {
-                if let Ok((mut stream, addr)) = listener.accept().await {
-                    tracing::info!("accepted connection from {}", addr);
-                    match noise::handshake_as_responder(&mut stream, &secret).await {
-                        Ok(mut transport) => {
-                            tracing::info!("Noise handshake succeeded (as responder)");
-                            if let Ok(msg) = noise::recv_encrypted(&mut stream, &mut transport).await
-                            {
-                                tracing::info!(
-                                    "received: {}",
-                                    String::from_utf8_lossy(&msg)
-                                );
-                            }
+    tokio::spawn(discovery::run(discovery_identity, secret, my_pub));
+
+    tokio::spawn(async move {
+        loop {
+            if let Ok((mut stream, addr)) = listener.accept().await {
+                tracing::info!("accepted connection from {}", addr);
+                match noise::handshake_as_responder(&mut stream, &secret).await {
+                    Ok((transport, remote_pub)) => {
+                        tracing::info!("Noise handshake succeeded (as responder)");
+                        if let Err(e) = session::run_session(
+                            &mut stream,
+                            transport,
+                            my_pub,
+                            remote_pub,
+                            "peer",
+                        )
+                        .await
+                        {
+                            tracing::warn!("session error: {e:#}");
                         }
-                        Err(e) => tracing::warn!("handshake failed: {e:#}"),
                     }
+                    Err(e) => tracing::warn!("handshake failed: {e:#}"),
                 }
             }
         }
     });
 
-    // Keep the process alive.
     tokio::signal::ctrl_c().await?;
     Ok(())
 }
