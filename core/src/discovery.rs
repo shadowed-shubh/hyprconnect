@@ -1,12 +1,51 @@
-use std::collections::HashSet;
-use std::sync::{Arc, Mutex};
-
 use anyhow::{Context, Result};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use once_cell::sync::OnceCell;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
 use tokio::net::TcpStream;
 use tracing::{info, warn};
 
+use crate::pairing::PairingConfirmer;
+
 const SERVICE_TYPE: &str = "_hyprconnect._tcp.local.";
+
+#[derive(Clone, Debug)]
+pub struct DiscoveredDevice {
+    pub device_id: String,
+    pub device_name: String,
+    pub device_type: String,
+    pub address: Option<String>,
+    pub port: u16,
+}
+
+static DISCOVERED: OnceCell<Mutex<HashMap<String, DiscoveredDevice>>> = OnceCell::new();
+
+fn discovered_slot() -> &'static Mutex<HashMap<String, DiscoveredDevice>> {
+    DISCOVERED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn discovered_devices() -> Vec<DiscoveredDevice> {
+    discovered_slot()
+        .lock()
+        .unwrap()
+        .values()
+        .cloned()
+        .collect()
+}
+
+pub fn get_discovered(device_id: &str) -> Option<DiscoveredDevice> {
+    discovered_slot().lock().unwrap().get(device_id).cloned()
+}
+
+pub fn get_discovered_by_address(address: &str) -> Option<DiscoveredDevice> {
+    discovered_slot()
+        .lock()
+        .unwrap()
+        .values()
+        .find(|device| device.address.as_deref() == Some(address))
+        .cloned()
+}
 
 pub struct DiscoveryIdentity {
     pub device_id: String,
@@ -14,12 +53,14 @@ pub struct DiscoveryIdentity {
     pub device_type: String,
     pub protocol_version: u32,
     pub port: u16,
+    pub auto_pair: bool,
 }
 
 pub async fn run(
     identity: DiscoveryIdentity,
     x25519_secret: [u8; 32],
     my_pub: [u8; 32],
+    confirmer: Arc<dyn PairingConfirmer>,
 ) -> Result<()> {
     let mdns = ServiceDaemon::new().context("failed to start mDNS daemon")?;
 
@@ -74,6 +115,34 @@ pub async fn run(
                     continue;
                 }
 
+                let remote_name = props
+                    .get_property_val_str("device_name")
+                    .unwrap_or("unknown")
+                    .to_string();
+                let remote_type = props
+                    .get_property_val_str("device_type")
+                    .unwrap_or("unknown")
+                    .to_string();
+                let address = info
+                    .get_addresses()
+                    .iter()
+                    .find(|a| a.is_ipv4())
+                    .map(ToString::to_string);
+                discovered_slot().lock().unwrap().insert(
+                    remote_id.clone(),
+                    DiscoveredDevice {
+                        device_id: remote_id.clone(),
+                        device_name: remote_name.clone(),
+                        device_type: remote_type.clone(),
+                        address: address.clone(),
+                        port: info.get_port(),
+                    },
+                );
+
+                if !identity.auto_pair {
+                    continue;
+                }
+
                 {
                     let seen = already_connected.lock().unwrap();
                     if seen.contains(&remote_id) {
@@ -97,19 +166,13 @@ pub async fn run(
                     continue;
                 }
 
-                let remote_name = props
-                    .get_property_val_str("device_name")
-                    .unwrap_or("unknown")
-                    .to_string();
-
                 // Prefer IPv4 — link-local IPv6 (fe80::...) needs a
                 // network interface scope id to be connectable, which
                 // we don't have here. If IPv4 hasn't resolved yet
                 // (mDNS can fire ServiceResolved before all addresses
                 // are known), skip WITHOUT marking this device as
                 // seen, so a later announcement gets another chance.
-                let addresses = info.get_addresses();
-                let Some(addr) = addresses.iter().find(|a| a.is_ipv4()) else {
+                let Some(addr) = address else {
                     info!(
                         "{} ({}) has no IPv4 address yet, waiting for next announcement",
                         remote_name, remote_id
@@ -133,11 +196,22 @@ pub async fn run(
                 let secret = x25519_secret;
                 let remote_name_clone = remote_name.clone();
                 let remote_id_clone = remote_id.clone();
+                let connected = already_connected.clone();
+                let confirmer = confirmer.clone();
 
                 tokio::spawn(async move {
-                    if let Err(e) =
-                        connect_and_handshake(&target, secret, my_pub, &remote_name_clone).await
+                    if let Err(e) = connect_and_handshake(
+                        &target,
+                        secret,
+                        my_pub,
+                        &remote_id_clone,
+                        &remote_name_clone,
+                        &remote_type,
+                        confirmer,
+                    )
+                    .await
                     {
+                        connected.lock().unwrap().remove(&remote_id_clone);
                         warn!(
                             "failed to connect/handshake with {} ({}): {e:#}",
                             remote_name_clone, remote_id_clone
@@ -153,11 +227,14 @@ pub async fn run(
     Ok(())
 }
 
-async fn connect_and_handshake(
+pub(crate) async fn connect_and_handshake(
     target: &str,
     x25519_secret: [u8; 32],
     my_pub: [u8; 32],
+    remote_id: &str,
     remote_name: &str,
+    remote_type: &str,
+    confirmer: Arc<dyn PairingConfirmer>,
 ) -> Result<()> {
     let mut stream = TcpStream::connect(target)
         .await
@@ -168,7 +245,20 @@ async fn connect_and_handshake(
     let (transport, remote_pub) =
         crate::noise::handshake_as_initiator(&mut stream, &x25519_secret).await?;
 
-    info!("Noise handshake succeeded with {} (as initiator)", remote_name);
+    info!(
+        "Noise handshake succeeded with {} (as initiator)",
+        remote_name
+    );
 
-    crate::session::run_session(&mut stream, transport, my_pub, remote_pub, remote_name).await
+    crate::session::run_session(
+        stream,
+        transport,
+        my_pub,
+        remote_pub,
+        remote_id,
+        remote_name,
+        remote_type,
+        confirmer,
+    )
+    .await
 }

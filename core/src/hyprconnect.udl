@@ -1,0 +1,31 @@
+namespace hyprconnect_core {
+    [Throws=HyprConnectError, Async]
+    void pair(string device_id);
+
+    [Async]
+    void start_discovery();
+
+    sequence<DeviceInfo> list_devices();
+
+    void register_callback(DeviceEventCallback callback);
+    void confirm_pairing(string device_id, boolean accepted);
+};
+
+dictionary DeviceInfo {
+    string device_id;
+    string device_name;
+    string device_type;
+    boolean trusted;
+};
+
+[Error]
+enum HyprConnectError {
+    "DeviceNotFound",
+    "NotPaired",
+    "PairingInProgress",
+    "Transport",
+};
+
+callback interface DeviceEventCallback {
+    void on_pairing_code(string device_id, string code);
+};

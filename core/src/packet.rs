@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use snow::TransportState;
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::noise;
 
@@ -27,9 +27,8 @@ impl Packet {
         }
     }
 }
-
-pub async fn send_packet(
-    stream: &mut TcpStream,
+pub async fn send_packet<W: AsyncWrite + Unpin>(
+    stream: &mut W,
     transport: &mut TransportState,
     packet: &Packet,
 ) -> Result<()> {
@@ -37,8 +36,8 @@ pub async fn send_packet(
     noise::send_encrypted(stream, transport, &bytes).await
 }
 
-pub async fn recv_packet(
-    stream: &mut TcpStream,
+pub async fn recv_packet<R: AsyncRead + Unpin>(
+    stream: &mut R,
     transport: &mut TransportState,
 ) -> Result<Packet> {
     let bytes = noise::recv_encrypted(stream, transport).await?;

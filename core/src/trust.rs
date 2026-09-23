@@ -7,16 +7,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustedDevice {
+    pub device_id: String,
     pub device_name: String,
+    pub device_type: String,
     pub x25519_pub_hex: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct TrustStore {
-    // Keyed by the peer's x25519 public key, hex-encoded — this is
-    // what the Noise handshake actually authenticates, so it's the
-    // right identity anchor, not device_id (which is just a label
-    // a peer could technically change).
     devices: HashMap<String, TrustedDevice>,
 }
 
@@ -34,7 +32,7 @@ fn load() -> Result<TrustStore> {
         return Ok(TrustStore::default());
     }
     let text = fs::read_to_string(&path)?;
-    Ok(serde_json::from_str(&text).unwrap_or_default())
+    Ok(serde_json::from_str(&text)?)
 }
 
 fn save(store: &TrustStore) -> Result<()> {
@@ -48,14 +46,25 @@ pub fn is_trusted(remote_pub: &[u8; 32]) -> bool {
     store.devices.contains_key(&hex::encode(remote_pub))
 }
 
-pub fn add_trusted(remote_pub: &[u8; 32], device_name: &str) -> Result<()> {
+pub fn add_trusted(
+    remote_pub: &[u8; 32],
+    device_id: &str,
+    device_name: &str,
+    device_type: &str,
+) -> Result<()> {
     let mut store = load()?;
     store.devices.insert(
         hex::encode(remote_pub),
         TrustedDevice {
+            device_id: device_id.to_string(),
             device_name: device_name.to_string(),
+            device_type: device_type.to_string(),
             x25519_pub_hex: hex::encode(remote_pub),
         },
     );
     save(&store)
+}
+
+pub fn trusted_devices() -> Result<Vec<TrustedDevice>> {
+    Ok(load()?.devices.into_values().collect())
 }
