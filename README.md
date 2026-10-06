@@ -5,6 +5,18 @@ Clipboard sync, notifications, battery status, file transfer — inspired by
 KDE Connect and Apple Continuity, but built on our **own protocol** (not
 KDE Connect compatible).
 
+## Architecture Diagram
+
+Interactive runtime architecture diagram (hosted on GitHub Pages):
+
+**[View Architecture Diagram →](https://shadowed-shubh.github.io/hyprconnect/)**
+
+The diagram shows:
+- Platform split: Android Device (UniFFI + Kotlin) ↔ Linux Desktop (native Rust) via shared Core Library
+- Network path: mDNS discovery → TCP transport → Noise_XX handshake → Encrypted session → Typed feature packets
+- Trust model: Ed25519/X25519 device identity, trust-on-first-use pairing with 6-digit fingerprint verification
+- Security boundaries: Encrypted Channel (Noise_XX), Trust Boundary (TOFU)
+
 ## What it is
 
 HyprConnect wirelessly links a phone and a desktop so they behave like one
@@ -31,12 +43,14 @@ The stack is designed around a simple, debuggable, own-protocol design:
 ```
 hyprconnect/
 ├── protocol/          # shared protocol logic — packet types, identity
+├── core/              # shared core crate — discovery, noise, session, trust, pairing
 ├── md files/
 │   └── scope v1.md    # the protocol spec, the source of truth
-└── daemon/            # hyprconnectd — the Linux side binary
+├── daemon/            # hyprconnectd — the Linux side binary
+└── android/           # Android app (UniFFI bindings + Kotlin UI)
 ```
 
-The `protocol` crate is shared by both platforms. On Android it's reused
+The `core` crate is shared by both platforms. On Android it's reused
 as-is via **UniFFI** bindings (no Kotlin reimplementation of the wire
 protocol).
 
