@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "HyprConnect Runtime Architecture",
+    "subtitle": "Device continuity between Android and Linux via Noise_XX, mDNS, and trust-on-first-use pairing",
+    "quality_profile": "showcase",
+    "viewBox": [1350, 950],
+    "views": [
+      { "id": "primary-path", "label": "Primary connection path", "focus": ["android-app", "core-lib", "mdns-discovery", "tcp-transport", "noise-handshake", "encrypted-session", "typed-feature-packets"], "note": "Follow the device-to-device connection from discovery through encrypted feature exchange." },
+      { "id": "platform-split", "label": "Platform boundary", "focus": ["android-app", "core-lib", "linux-daemon", "uniffi-ffi"], "note": "See how the shared Rust core bridges Android (Kotlin/UniFFI) and Linux (native)." }
+    ]
+  },
+  "components": [
+    { "id": "android-app", "type": "frontend", "label": "Android App", "sublabel": "Kotlin + UniFFI", "pos": [50, 100], "size": [140, 60], "tag": "minSdk 24" },
+    { "id": "linux-daemon", "type": "backend", "label": "Linux Daemon", "sublabel": "hyprconnectd", "pos": [50, 540], "size": [140, 60], "tag": "Rust + Tokio" },
+    { "id": "core-lib", "type": "backend", "label": "Core Library", "sublabel": "hyprconnect-core", "pos": [240, 320], "size": [160, 60], "tag": "shared logic" },
+    { "id": "uniffi-ffi", "type": "messagebus", "label": "UniFFI FFI", "sublabel": "Kotlin ↔ Rust bridge", "pos": [460, 100], "size": [150, 60], "tag": "codegen" },
+    { "id": "mdns-discovery", "type": "cloud", "label": "mDNS Discovery", "sublabel": "_hyprconnect._tcp.local", "pos": [460, 320], "size": [150, 60], "tag": "DNS-SD" },
+    { "id": "tcp-transport", "type": "backend", "label": "TCP Transport", "sublabel": "IPv4 + port", "pos": [680, 320], "size": [150, 60], "tag": "Tokio TcpStream" },
+    { "id": "noise-handshake", "type": "security", "label": "Noise Handshake", "sublabel": "Noise_XX", "pos": [680, 100], "size": [160, 60], "tag": "snow crate" },
+    { "id": "encrypted-session", "type": "backend", "label": "Encrypted Session", "sublabel": "TransportState", "pos": [880, 100], "size": [160, 60], "tag": "per-peer" },
+    { "id": "typed-feature-packets", "type": "messagebus", "label": "Typed Feature Packets", "sublabel": "JSON {type, req_id?, body}", "pos": [880, 320], "size": [160, 60], "tag": "extensible" },
+    { "id": "local-network", "type": "external", "label": "Local Network", "sublabel": "Wi-Fi / Ethernet", "pos": [1080, 320], "size": [160, 60], "tag": "IPv4 multicast" }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Android Device", "wraps": ["android-app", "uniffi-ffi", "mdns-discovery", "tcp-transport", "noise-handshake", "encrypted-session", "typed-feature-packets"], "pad": 30 },
+    { "kind": "region", "label": "Linux Desktop", "wraps": ["linux-daemon", "core-lib", "mdns-discovery", "tcp-transport", "noise-handshake", "encrypted-session", "typed-feature-packets"], "pad": 30 },
+    { "kind": "security-group", "label": "Encrypted Channel (Noise_XX)", "wraps": ["noise-handshake", "encrypted-session", "typed-feature-packets"], "pad": 15 }
+  ],
+  "connections": [
+    { "id": "app-to-core", "from": "android-app", "to": "core-lib", "label": "UniFFI calls", "variant": "emphasis", "labelAt": [160, 190] },
+    { "id": "core-to-ffi", "from": "core-lib", "to": "uniffi-ffi", "label": "FFI exports", "labelAt": [370, 190] },
+    { "id": "daemon-to-core", "from": "linux-daemon", "to": "core-lib", "label": "direct Rust calls", "variant": "emphasis", "labelAt": [160, 430] },
+    { "id": "discovery-advertise", "from": "core-lib", "to": "mdns-discovery", "label": "register", "variant": "emphasis", "labelAt": [370, 390] },
+    { "id": "discovery-browse", "from": "mdns-discovery", "to": "core-lib", "label": "resolved", "labelAt": [370, 250] },
+    { "id": "discovery-to-tcp", "from": "mdns-discovery", "to": "tcp-transport", "label": "dial", "labelAt": [565, 390] },
+    { "id": "tcp-to-noise", "from": "tcp-transport", "to": "noise-handshake", "label": "handshake", "fromSide": "top", "toSide": "bottom", "labelAt": [760, 210] },
+    { "id": "noise-to-session", "from": "noise-handshake", "to": "encrypted-session", "label": "TransportState", "labelAt": [1040, 170] },
+    { "id": "session-to-packets", "from": "encrypted-session", "to": "typed-feature-packets", "label": "send/recv", "labelAt": [960, 210] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Protocol Stack", "items": ["Noise_XX (X25519/ChaChaPoly/BLAKE2s)", "Length-prefixed frames (u16 BE)", "JSON packets: {type, req_id?, body}", "No TLS, no X.509 certificates"] },
+    { "dot": "emerald", "title": "Discovery & Transport", "items": ["mDNS/DNS-SD: _hyprconnect._tcp.local", "IPv4 only (link-local IPv6 skipped)", "Deterministic tie-break: smaller device_id dials", "Auto-pair option on discovery"] },
+    { "dot": "rose", "title": "Trust Model (TOFU)", "items": ["Persistent Ed25519/X25519 per device (identity.json)", "6-digit fingerprint from SHA-256(pubkeys)", "Human confirmation required on both sides", "Trusted = stored X25519 public key (trusted_devices.json)"] },
+    { "dot": "violet", "title": "Platform Bridge", "items": ["Single shared Rust core (protocol crate)", "UniFFI generates Kotlin bindings", "Android: foreground service + WakeLock", "Linux: systemd/user service (planned)"] },
+    { "dot": "amber", "title": "Current Features (v0.1)", "items": ["Ping/Pong keepalive (core)", "Battery status (Linux daemon only)", "Planned: clipboard, notifications, file transfer"] }
+  ]
+}
