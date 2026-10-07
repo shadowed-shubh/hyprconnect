@@ -1,6 +1,15 @@
 # Rust build artifacts
 /target/
 
+# Android/Gradle generated files
+/android/.gradle/
+/android/.gradle-user/
+/android/.kotlin/
+/android/.idea/
+/android/build/
+/android/app/build/
+/android/local.properties
+
 # OS files
 .DS_Store
 .html
