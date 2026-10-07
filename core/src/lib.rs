@@ -5,12 +5,24 @@ pub mod noise;
 pub mod packet;
 pub mod pairing;
 pub mod session;
+pub mod settings;
 pub mod trust;
 
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::net::TcpListener;
-use tracing::warn;
+use once_cell::sync::OnceCell;
+
+static FFI_RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
+
+fn ffi_runtime() -> anyhow::Result<&'static tokio::runtime::Runtime> {
+    FFI_RUNTIME.get_or_try_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(Into::into)
+    })
+}
 
 #[derive(Debug, Error)]
 pub enum HyprConnectError {
@@ -20,6 +32,8 @@ pub enum HyprConnectError {
     NotPaired,
     #[error("another pairing is already in progress")]
     PairingInProgress,
+    #[error("invalid settings: {0}")]
+    InvalidSettings(String),
     #[error("transport error: {0}")]
     Transport(String),
 }
@@ -30,20 +44,51 @@ pub struct DeviceInfo {
     pub device_name: String,
     pub device_type: String,
     pub trusted: bool,
+    pub online: bool,
 }
 
 pub trait DeviceEventCallback: Send + Sync {
     fn on_pairing_code(&self, device_id: String, code: String);
 }
 
+pub fn set_config_dir(path: String) -> Result<(), HyprConnectError> {
+    settings::configure_config_dir(path)
+        .map_err(|error| HyprConnectError::InvalidSettings(error.to_string()))
+}
+
 pub async fn pair(device_id: String) -> Result<(), HyprConnectError> {
+    let runtime = ffi_runtime()
+        .map_err(|error| HyprConnectError::Transport(format!("{error:#}")))?;
+    runtime
+        .block_on(pair_impl(device_id))
+        .map_err(|error| HyprConnectError::Transport(error.to_string()))
+}
+
+async fn pair_impl(device_id: String) -> anyhow::Result<()> {
     if pairing::is_pairing_in_progress() {
-        return Err(HyprConnectError::PairingInProgress);
+        anyhow::bail!("another pairing is already in progress");
     }
-    let device = discovery::get_discovered(&device_id).ok_or(HyprConnectError::DeviceNotFound)?;
-    let address = device.address.ok_or_else(|| {
-        HyprConnectError::Transport("device has no resolved IPv4 address".to_string())
-    })?;
+
+    // mDNS can publish the service before the host A record arrives. Give
+    // the resolver a short window rather than failing on the first tap.
+    let device = discovery::get_discovered(&device_id)
+        .ok_or_else(|| anyhow::anyhow!("device not found"))?;
+    let device = {
+        let mut current = device;
+        for _ in 0..10 {
+            if current.address.is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            if let Some(updated) = discovery::get_discovered(&device_id) {
+                current = updated;
+            }
+        }
+        current
+    };
+    let address = device
+        .address
+        .ok_or_else(|| anyhow::anyhow!("device has no resolved IPv4 address"))?;
     let target = format!("{}:{}", address, device.port);
     let identity =
         identity::load_or_generate().map_err(|e| HyprConnectError::Transport(e.to_string()))?;
@@ -59,8 +104,8 @@ pub async fn pair(device_id: String) -> Result<(), HyprConnectError> {
         &device.device_type,
         confirmer,
     )
-    .await
-    .map_err(|e| HyprConnectError::Transport(e.to_string()))
+    .await?;
+    Ok(())
 }
 
 pub fn list_devices() -> Vec<DeviceInfo> {
@@ -75,22 +120,37 @@ pub fn list_devices() -> Vec<DeviceInfo> {
                 device_name: device.device_name,
                 device_type: device.device_type,
                 trusted: true,
+                online: false,
             },
         );
     }
 
     for device in discovery::discovered_devices() {
-        devices
-            .entry(device.device_id.clone())
-            .or_insert(DeviceInfo {
-                device_id: device.device_id,
-                device_name: device.device_name,
-                device_type: device.device_type,
-                trusted: false,
-            });
+        if let Some(existing) = devices.get_mut(&device.device_id) {
+            existing.online = true;
+            existing.device_name = device.device_name;
+            existing.device_type = device.device_type;
+        } else {
+            devices.insert(
+                device.device_id.clone(),
+                DeviceInfo {
+                    device_id: device.device_id,
+                    device_name: device.device_name,
+                    device_type: device.device_type,
+                    trusted: false,
+                    online: true,
+                },
+            );
+        }
     }
 
     devices.into_values().collect()
+}
+
+pub fn remove_trusted_device(device_id: String) -> Result<(), HyprConnectError> {
+    trust::remove_trusted(&device_id)
+        .map(|_| ())
+        .map_err(|error| HyprConnectError::Transport(error.to_string()))
 }
 
 pub fn register_callback(callback: Box<dyn DeviceEventCallback>) {
@@ -101,37 +161,53 @@ pub fn confirm_pairing(device_id: String, accepted: bool) {
     pairing::confirm_pairing(device_id, accepted);
 }
 
-pub async fn start_discovery() {
+/// UniFFI entry point: start mDNS discovery with explicitly supplied settings.
+///
+/// The config file is not read here; the caller owns the values.
+pub async fn start_discovery(
+    device_name: String,
+    device_type: String,
+    auto_pair: bool,
+) -> Result<(), HyprConnectError> {
+    let settings = settings::Settings::from_args(&device_name, &device_type, auto_pair)
+        .map_err(|error| HyprConnectError::InvalidSettings(error.to_string()))?;
     let confirmer: Arc<dyn pairing::PairingConfirmer> = Arc::new(pairing::CallbackConfirmer);
-    if let Err(error) =
-        start_discovery_with_options("HyprConnect Device", "phone", false, confirmer).await
-    {
-        warn!("failed to start discovery: {error:#}");
-    }
+    // UniFFI polls this future from the foreign-language side, which does
+    // not provide a Tokio reactor. Keep a runtime alive for mDNS/TCP work.
+    ffi_runtime()
+        .map_err(|error| HyprConnectError::Transport(format!("{error:#}")))?
+        .block_on(start_discovery_with_settings(settings, confirmer))
+        .map_err(|error| HyprConnectError::Transport(format!("{error:#}")))
 }
 
-pub async fn start_discovery_with_options(
-    device_name: &str,
-    device_type: &str,
-    auto_pair: bool,
+/// Start mDNS discovery and the incoming connection listener from settings.
+///
+/// Used by the daemon after loading `config.toml`.
+pub async fn start_discovery_with_settings(
+    settings: settings::Settings,
     confirmer: Arc<dyn pairing::PairingConfirmer>,
 ) -> anyhow::Result<()> {
+    settings.validate()?;
     let device_identity = identity::load_or_generate()?;
-    let listener = TcpListener::bind("0.0.0.0:0").await?;
+    let listener = TcpListener::bind((settings.listen_host.as_str(), settings.listen_port)).await?;
     let real_port = listener.local_addr()?.port();
     let secret = device_identity.x25519_secret.to_bytes();
     let my_pub = device_identity.x25519_public;
 
     println!("device_id: {}", device_identity.device_id);
-    println!("listening on port {}", real_port);
+    println!("device_name: {}", settings.device_name);
+    println!(
+        "listening on {}:{}",
+        settings.listen_host, real_port
+    );
 
     let discovery_identity = discovery::DiscoveryIdentity {
         device_id: device_identity.device_id,
-        device_name: device_name.to_string(),
-        device_type: device_type.to_string(),
-        protocol_version: 1,
+        device_name: settings.device_name.clone(),
+        device_type: settings.device_type.clone(),
+        protocol_version: settings::PROTOCOL_VERSION,
         port: real_port,
-        auto_pair,
+        auto_pair: settings.auto_pair,
     };
 
     tokio::spawn(discovery::run(

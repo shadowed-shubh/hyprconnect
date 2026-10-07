@@ -143,6 +143,13 @@ pub async fn run(
                     continue;
                 }
 
+                // Automatic reconnect is limited to devices that have
+                // already completed the verification flow. New devices
+                // must still be paired explicitly by the user.
+                if !crate::trust::is_trusted_device_id(&remote_id) {
+                    continue;
+                }
+
                 {
                     let seen = already_connected.lock().unwrap();
                     if seen.contains(&remote_id) {
@@ -218,6 +225,12 @@ pub async fn run(
                         );
                     }
                 });
+            }
+            Ok(ServiceEvent::ServiceRemoved(_, fullname)) => {
+                if let Some(device_id) = fullname.split('.').next() {
+                    discovered_slot().lock().unwrap().remove(device_id);
+                    already_connected.lock().unwrap().remove(device_id);
+                }
             }
             Ok(_) => {}
             Err(_) => break,
