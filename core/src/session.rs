@@ -22,7 +22,10 @@ pub async fn run_session(
     confirmer: Arc<dyn PairingConfirmer>,
 ) -> Result<()> {
     if trust::is_trusted(&remote_pub) {
-        info!("{} is already trusted", remote_name);
+        // Refresh the display metadata so the desktop always has the
+        // current advertised Android name available after reconnect.
+        trust::add_trusted(&remote_pub, remote_id, remote_name, remote_type)?;
+        info!("connected to trusted device {} ({})", remote_name, remote_id);
     } else {
         let code = pairing::fingerprint(&my_pub, &remote_pub);
         if confirmer.confirm(remote_id, &code, remote_name).await? {

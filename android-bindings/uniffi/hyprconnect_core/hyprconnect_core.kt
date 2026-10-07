@@ -749,6 +749,10 @@ internal open class UniffiVTableCallbackInterfaceDeviceEventCallback(
 
 
 
+
+
+
+
 // A JNA Library to expose the extern-C FFI definitions.
 // This is an implementation detail which will be called internally by the public API.
 
@@ -775,7 +779,11 @@ internal interface UniffiLib : Library {
     ): Long
     fun uniffi_hyprconnect_core_fn_func_register_callback(`callback`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
-    fun uniffi_hyprconnect_core_fn_func_start_discovery(
+    fun uniffi_hyprconnect_core_fn_func_remove_trusted_device(`deviceId`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_hyprconnect_core_fn_func_set_config_dir(`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Unit
+    fun uniffi_hyprconnect_core_fn_func_start_discovery(`deviceName`: RustBuffer.ByValue,`deviceType`: RustBuffer.ByValue,`autoPair`: Byte,
     ): Long
     fun ffi_hyprconnect_core_rustbuffer_alloc(`size`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -897,6 +905,10 @@ internal interface UniffiLib : Library {
     ): Short
     fun uniffi_hyprconnect_core_checksum_func_register_callback(
     ): Short
+    fun uniffi_hyprconnect_core_checksum_func_remove_trusted_device(
+    ): Short
+    fun uniffi_hyprconnect_core_checksum_func_set_config_dir(
+    ): Short
     fun uniffi_hyprconnect_core_checksum_func_start_discovery(
     ): Short
     fun uniffi_hyprconnect_core_checksum_method_deviceeventcallback_on_pairing_code(
@@ -930,7 +942,13 @@ private fun uniffiCheckApiChecksums(lib: UniffiLib) {
     if (lib.uniffi_hyprconnect_core_checksum_func_register_callback() != 28841.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_hyprconnect_core_checksum_func_start_discovery() != 1678.toShort()) {
+    if (lib.uniffi_hyprconnect_core_checksum_func_remove_trusted_device() != 60317.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_hyprconnect_core_checksum_func_set_config_dir() != 46842.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_hyprconnect_core_checksum_func_start_discovery() != 60678.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_hyprconnect_core_checksum_method_deviceeventcallback_on_pairing_code() != 37555.toShort()) {
@@ -1109,7 +1127,8 @@ data class DeviceInfo (
     var `deviceId`: kotlin.String, 
     var `deviceName`: kotlin.String, 
     var `deviceType`: kotlin.String, 
-    var `trusted`: kotlin.Boolean
+    var `trusted`: kotlin.Boolean, 
+    var `online`: kotlin.Boolean
 ) {
     
     companion object
@@ -1125,6 +1144,7 @@ public object FfiConverterTypeDeviceInfo: FfiConverterRustBuffer<DeviceInfo> {
             FfiConverterString.read(buf),
             FfiConverterString.read(buf),
             FfiConverterBoolean.read(buf),
+            FfiConverterBoolean.read(buf),
         )
     }
 
@@ -1132,7 +1152,8 @@ public object FfiConverterTypeDeviceInfo: FfiConverterRustBuffer<DeviceInfo> {
             FfiConverterString.allocationSize(value.`deviceId`) +
             FfiConverterString.allocationSize(value.`deviceName`) +
             FfiConverterString.allocationSize(value.`deviceType`) +
-            FfiConverterBoolean.allocationSize(value.`trusted`)
+            FfiConverterBoolean.allocationSize(value.`trusted`) +
+            FfiConverterBoolean.allocationSize(value.`online`)
     )
 
     override fun write(value: DeviceInfo, buf: ByteBuffer) {
@@ -1140,6 +1161,7 @@ public object FfiConverterTypeDeviceInfo: FfiConverterRustBuffer<DeviceInfo> {
             FfiConverterString.write(value.`deviceName`, buf)
             FfiConverterString.write(value.`deviceType`, buf)
             FfiConverterBoolean.write(value.`trusted`, buf)
+            FfiConverterBoolean.write(value.`online`, buf)
     }
 }
 
@@ -1154,6 +1176,8 @@ sealed class HyprConnectException(message: String): kotlin.Exception(message) {
         class NotPaired(message: String) : HyprConnectException(message)
         
         class PairingInProgress(message: String) : HyprConnectException(message)
+        
+        class InvalidSettings(message: String) : HyprConnectException(message)
         
         class Transport(message: String) : HyprConnectException(message)
         
@@ -1173,7 +1197,8 @@ public object FfiConverterTypeHyprConnectError : FfiConverterRustBuffer<HyprConn
             1 -> HyprConnectException.DeviceNotFound(FfiConverterString.read(buf))
             2 -> HyprConnectException.NotPaired(FfiConverterString.read(buf))
             3 -> HyprConnectException.PairingInProgress(FfiConverterString.read(buf))
-            4 -> HyprConnectException.Transport(FfiConverterString.read(buf))
+            4 -> HyprConnectException.InvalidSettings(FfiConverterString.read(buf))
+            5 -> HyprConnectException.Transport(FfiConverterString.read(buf))
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
         
@@ -1197,8 +1222,12 @@ public object FfiConverterTypeHyprConnectError : FfiConverterRustBuffer<HyprConn
                 buf.putInt(3)
                 Unit
             }
-            is HyprConnectException.Transport -> {
+            is HyprConnectException.InvalidSettings -> {
                 buf.putInt(4)
+                Unit
+            }
+            is HyprConnectException.Transport -> {
+                buf.putInt(5)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }
@@ -1367,10 +1396,29 @@ public object FfiConverterSequenceTypeDeviceInfo: FfiConverterRustBuffer<List<De
     
     
 
+    @Throws(HyprConnectException::class) fun `removeTrustedDevice`(`deviceId`: kotlin.String)
+        = 
+    uniffiRustCallWithError(HyprConnectException) { _status ->
+    UniffiLib.INSTANCE.uniffi_hyprconnect_core_fn_func_remove_trusted_device(
+        FfiConverterString.lower(`deviceId`),_status)
+}
+    
+    
+
+    @Throws(HyprConnectException::class) fun `setConfigDir`(`path`: kotlin.String)
+        = 
+    uniffiRustCallWithError(HyprConnectException) { _status ->
+    UniffiLib.INSTANCE.uniffi_hyprconnect_core_fn_func_set_config_dir(
+        FfiConverterString.lower(`path`),_status)
+}
+    
+    
+
+    @Throws(HyprConnectException::class)
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
-     suspend fun `startDiscovery`() {
+     suspend fun `startDiscovery`(`deviceName`: kotlin.String, `deviceType`: kotlin.String, `autoPair`: kotlin.Boolean) {
         return uniffiRustCallAsync(
-        UniffiLib.INSTANCE.uniffi_hyprconnect_core_fn_func_start_discovery(),
+        UniffiLib.INSTANCE.uniffi_hyprconnect_core_fn_func_start_discovery(FfiConverterString.lower(`deviceName`),FfiConverterString.lower(`deviceType`),FfiConverterBoolean.lower(`autoPair`),),
         { future, callback, continuation -> UniffiLib.INSTANCE.ffi_hyprconnect_core_rust_future_poll_void(future, callback, continuation) },
         { future, continuation -> UniffiLib.INSTANCE.ffi_hyprconnect_core_rust_future_complete_void(future, continuation) },
         { future -> UniffiLib.INSTANCE.ffi_hyprconnect_core_rust_future_free_void(future) },
@@ -1378,7 +1426,7 @@ public object FfiConverterSequenceTypeDeviceInfo: FfiConverterRustBuffer<List<De
         { Unit },
         
         // Error FFI converter
-        UniffiNullRustCallStatusErrorHandler,
+        HyprConnectException.ErrorHandler,
     )
     }
 
