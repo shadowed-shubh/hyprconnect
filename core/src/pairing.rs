@@ -34,28 +34,6 @@ impl PairingConfirmer for StdinConfirmer {
 
 pub struct CallbackConfirmer;
 
-/// Accepts every pairing request without asking the user.
-///
-/// Selected by `confirmation = "auto"` in `config.toml`. Never the default:
-/// auto-accepting defeats the TOFU check that the numeric code provides.
-pub struct AcceptAllConfirmer;
-
-impl PairingConfirmer for AcceptAllConfirmer {
-    fn confirm(
-        &self,
-        device_id: &str,
-        _code: &str,
-        remote_name: &str,
-    ) -> BoxFuture<'static, Result<bool, HyprConnectError>> {
-        let device_id = device_id.to_string();
-        let remote_name = remote_name.to_string();
-        Box::pin(async move {
-            tracing::info!("auto-accepting pairing with {remote_name} ({device_id})");
-            Ok(true)
-        })
-    }
-}
-
 struct PendingPairing {
     device_id: String,
     responder: oneshot::Sender<bool>,

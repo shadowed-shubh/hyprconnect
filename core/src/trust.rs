@@ -19,8 +19,7 @@ struct TrustStore {
 }
 
 fn trust_file_path() -> Result<PathBuf> {
-    let mut dir = crate::settings::config_dir()
-        .context("could not determine config directory")?;
+    let mut dir = dirs::config_dir().context("could not determine config directory")?;
     dir.push("hyprconnect");
     fs::create_dir_all(&dir)?;
     dir.push("trusted_devices.json");
@@ -47,11 +46,6 @@ pub fn is_trusted(remote_pub: &[u8; 32]) -> bool {
     store.devices.contains_key(&hex::encode(remote_pub))
 }
 
-pub fn is_trusted_device_id(device_id: &str) -> bool {
-    let Ok(store) = load() else { return false };
-    store.devices.values().any(|device| device.device_id == device_id)
-}
-
 pub fn add_trusted(
     remote_pub: &[u8; 32],
     device_id: &str,
@@ -73,24 +67,4 @@ pub fn add_trusted(
 
 pub fn trusted_devices() -> Result<Vec<TrustedDevice>> {
     Ok(load()?.devices.into_values().collect())
-}
-
-pub fn remove_trusted(device_id: &str) -> Result<bool> {
-    let mut store = load()?;
-    let keys: Vec<String> = store
-        .devices
-        .iter()
-        .filter(|(_, device)| device.device_id == device_id)
-        .map(|(key, _)| key.clone())
-        .collect();
-
-    if keys.is_empty() {
-        return Ok(false);
-    }
-
-    for key in keys {
-        store.devices.remove(&key);
-    }
-    save(&store)?;
-    Ok(true)
 }

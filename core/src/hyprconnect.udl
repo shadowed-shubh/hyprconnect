@@ -1,17 +1,11 @@
 namespace hyprconnect_core {
-    [Throws=HyprConnectError]
-    void set_config_dir(string path);
-
     [Throws=HyprConnectError, Async]
     void pair(string device_id);
 
-    [Throws=HyprConnectError, Async]
-    void start_discovery(string device_name, string device_type, boolean auto_pair);
+    [Async]
+    void start_discovery();
 
     sequence<DeviceInfo> list_devices();
-
-    [Throws=HyprConnectError]
-    void remove_trusted_device(string device_id);
 
     void register_callback(DeviceEventCallback callback);
     void confirm_pairing(string device_id, boolean accepted);
@@ -22,7 +16,6 @@ dictionary DeviceInfo {
     string device_name;
     string device_type;
     boolean trusted;
-    boolean online;
 };
 
 [Error]
@@ -30,7 +23,6 @@ enum HyprConnectError {
     "DeviceNotFound",
     "NotPaired",
     "PairingInProgress",
-    "InvalidSettings",
     "Transport",
 };
 
