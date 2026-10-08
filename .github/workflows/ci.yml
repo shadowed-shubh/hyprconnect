@@ -32,17 +32,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$RUNNER_TEMP/android-sdk}}"
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           SDKMANAGER="$(command -v sdkmanager || true)"
           if [[ -z "$SDKMANAGER" ]]; then
+            SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-$RUNNER_TEMP/android-sdk}}"
             SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          else
+            SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+            if [[ -z "$SDK_ROOT" || ! -d "$SDK_ROOT" ]]; then
+              case "$SDKMANAGER" in
+                */cmdline-tools/*/bin/sdkmanager)
+                  SDK_ROOT="${SDKMANAGER%%/cmdline-tools/*}"
+                  ;;
+                */tools/bin/sdkmanager)
+                  SDK_ROOT="${SDKMANAGER%%/tools/bin/sdkmanager}"
+                  ;;
+              esac
+            fi
           fi
           [[ -x "$SDKMANAGER" ]] || {
             echo "sdkmanager not found after setup-android" >&2
             exit 1
           }
+          [[ -d "$SDK_ROOT" ]] || {
+            echo "Android SDK root not found: $SDK_ROOT" >&2
+            exit 1
+          }
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
           "$SDKMANAGER" --sdk_root="$SDK_ROOT" --install \
             "platforms;android-34" \
