@@ -27,6 +27,10 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # setup-android@v3 defaults to the obsolete `tools` package.
+          cmdline-tools-version: '14742923' # command-line tools 20.0
+          packages: ''
 
       - name: Install Android SDK and NDK
         shell: bash
