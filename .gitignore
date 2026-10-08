@@ -9,7 +9,7 @@
 /android/build/
 /android/app/build/
 /android/local.properties
-
+/ai_changes/
 # OS files
 .DS_Store
 .html
