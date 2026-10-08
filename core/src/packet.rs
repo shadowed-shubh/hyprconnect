@@ -6,7 +6,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::noise;
 
-// Matches SPEC.md's wire format. Since Noise already frames each
+// Matches `md files/scope v1.md`'s packet shape. Since Noise already frames each
 // encrypted message as one discrete unit (length-prefixed), we don't
 // need newline-delimiting on top — one Packet = one encrypted message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,4 +42,20 @@ pub async fn recv_packet<R: AsyncRead + Unpin>(
 ) -> Result<Packet> {
     let bytes = noise::recv_encrypted(stream, transport).await?;
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Packet;
+
+    #[test]
+    fn unknown_packet_types_remain_decodable() {
+        let packet: Packet = serde_json::from_value(serde_json::json!({
+            "type": "FUTURE_PACKET",
+            "body": {"value": 1}
+        }))
+        .unwrap();
+
+        assert_eq!(packet.packet_type, "FUTURE_PACKET");
+    }
 }

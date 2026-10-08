@@ -3,13 +3,10 @@ use snow::{Builder, HandshakeState, TransportState};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-// This exact string picks the cryptographic building blocks: X25519
-// for key exchange, ChaChaPoly for encryption, BLAKE2s for hashing.
-// Must be identical on both sides or the handshake fails outright.
-const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
+use crate::protocol::{FRAME_LENGTH_BYTES, MAX_FRAME_LENGTH, NOISE_PARAMS};
 
 async fn read_frame<R: AsyncRead + Unpin>(stream: &mut R) -> Result<Vec<u8>> {
-    let mut len_buf = [0u8; 2];
+    let mut len_buf = [0u8; FRAME_LENGTH_BYTES];
     stream.read_exact(&mut len_buf).await?;
     let len = u16::from_be_bytes(len_buf) as usize;
     let mut buf = vec![0u8; len];
@@ -18,6 +15,9 @@ async fn read_frame<R: AsyncRead + Unpin>(stream: &mut R) -> Result<Vec<u8>> {
 }
 
 async fn write_frame<W: AsyncWrite + Unpin>(stream: &mut W, data: &[u8]) -> Result<()> {
+    if data.len() > MAX_FRAME_LENGTH {
+        anyhow::bail!("frame too large for u16 length prefix");
+    }
     let len = u16::try_from(data.len()).context("frame too large for u16 length prefix")?;
     stream.write_all(&len.to_be_bytes()).await?;
     stream.write_all(data).await?;

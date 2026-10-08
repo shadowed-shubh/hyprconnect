@@ -1,9 +1,8 @@
 # HyprConnect
 
 Device continuity between an Android phone and a Linux/Hyprland desktop.
-Clipboard sync, notifications, battery status, file transfer — inspired by
-KDE Connect and Apple Continuity, but built on our **own protocol** (not
-KDE Connect compatible).
+HyprConnect is inspired by KDE Connect and Apple Continuity, but built on
+our **own protocol** (not KDE Connect compatible).
 
 ## Architecture Diagram
 
@@ -22,10 +21,9 @@ The diagram shows:
 HyprConnect wirelessly links a phone and a desktop so they behave like one
 device:
 
-- **Clipboard sync** — copy on one, paste on the other
-- **Notifications** — phone notifications appear on the desktop
-- **Battery status** — see your phone's battery from the desktop
-- **File transfer** — move files between devices
+- **Implemented foundation** — discovery, Noise_XX sessions, TOFU pairing,
+  trust storage, device listing, and PING/PONG liveness
+- **Planned features** — clipboard, notifications, battery, and file transfer
 - *(planned)* streams: audio/video/screen/remote input
 
 The stack is designed around a simple, debuggable, own-protocol design:
@@ -36,17 +34,16 @@ The stack is designed around a simple, debuggable, own-protocol design:
 - **mDNS/DNS-SD discovery** (`_hyprconnect._tcp.local`)
 - **Secure pairing** with a human-confirmed fingerprint code
   (trust-on-first-use, like SSH)
-- **Newline-delimited JSON** framing — readable in raw logs
+- **Length-prefixed encrypted JSON** framing inside Noise transport messages
 
 ## Repo layout
 
 ```
 hyprconnect/
-├── protocol/          # shared protocol logic — packet types, identity
 ├── core/              # shared core crate — discovery, noise, session, trust, pairing
 ├── md files/
 │   └── scope v1.md    # the protocol spec, the source of truth
-├── daemon/            # hyprconnectd — the Linux side binary
+├── daemon/            # thin Linux daemon/CLI
 └── android/           # Android app (UniFFI bindings + Kotlin UI)
 ```
 
@@ -56,17 +53,28 @@ protocol).
 
 ## Status
 
-**In progress — v0.1, early.** The protocol spec is written; the daemon's
-device identity (Ed25519 + X25519 keypairs, persisted on first run) is
-working. mDNS discovery, the Noise_XX handshake, pairing, and the message
-packets (ping, battery, clipboard, notification) are the current work.
-The Android app is not started.
+**In progress — v0.1, early.** The daemon and Android client share the Rust
+core. mDNS discovery, the Noise_XX handshake, pairing, trust storage,
+encrypted sessions, and PING/PONG are implemented. Clipboard, battery,
+notifications, and file transfer remain planned.
 
 A KDE Connect-compatible prototype (discovery → TLS → pairing → ping)
 was previously built and validated against a real Android phone; it proved
 out the architecture and informed the switch to our own, simpler protocol.
 
+## Prerequisites
+
+- Rust stable with the workspace targets installed for Linux and Android
+- JDK 17
+- Android SDK platform 34 and build-tools 34.0.0
+- Android NDK 30.0.16248370
+
+Set `ANDROID_SDK_ROOT` when the SDK is not at `~/Android/Sdk`. The Android
+script also accepts `ANDROID_NDK_HOME` or `HYPRCONNECT_NDK_VERSION`.
+
 ## Build & run
+
+Linux daemon:
 
 ```sh
 cargo run -p daemon
@@ -74,6 +82,42 @@ cargo run -p daemon
 
 On first run it generates a persistent device identity at
 `~/.config/hyprconnect/identity.json`.
+
+Android application and native core:
+
+```sh
+./scripts/build-android.sh
+```
+
+This is the canonical Android workflow. It builds the Rust core for
+`x86_64-linux-android` and `aarch64-linux-android`, regenerates both tracked
+UniFFI Kotlin binding copies, updates the matching checked-in native
+libraries, and runs the Gradle debug build. The script intentionally keeps the
+`.so` files tracked because the current Android project consumes `jniLibs`
+directly and has no Gradle/cargo native build integration.
+
+Rust checks:
+
+```sh
+cargo fmt --all -- --check
+cargo check --workspace --all-targets
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+git diff --check
+```
+
+GitHub Actions runs these checks and then calls the same Android build script.
+
+## Versioning and releases
+
+The current versions are protocol `1`, Rust core/daemon `0.1.0`, and Android
+application `0.1.0`. Protocol version changes require an explicit wire-format
+compatibility decision; ordinary releases do not change it.
+
+Release preparation is intentionally manual and small: run the Rust checks,
+run `./scripts/build-android.sh`, review generated bindings and native
+libraries, update the application/core versions together when appropriate,
+then create a `vX.Y.Z` tag and publish the release artifacts.
 
 ## License
 

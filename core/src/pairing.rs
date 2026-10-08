@@ -6,7 +6,20 @@ use sha2::{Digest, Sha256};
 use tokio::sync::oneshot;
 use tracing::warn;
 
+use crate::protocol::FINGERPRINT_MODULUS;
 use crate::{DeviceEventCallback, HyprConnectError};
+
+const PAIRING_CONFIRMATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn clear_pending_pairing_if_matches(device_id: &str) {
+    let mut pending = pending_slot().lock().unwrap();
+    if pending
+        .as_ref()
+        .is_some_and(|pending| pending.device_id == device_id)
+    {
+        pending.take();
+    }
+}
 
 pub trait PairingConfirmer: Send + Sync {
     fn confirm(
@@ -130,12 +143,21 @@ impl PairingConfirmer for CallbackConfirmer {
                         "pairing callback is not registered".to_string(),
                     ));
                 };
-                callback.on_pairing_code(device_id, code);
+                callback.on_pairing_code(device_id.clone(), code);
             }
 
-            receiver.await.map_err(|_| {
-                HyprConnectError::Transport("pairing confirmation channel closed".to_string())
-            })
+            match tokio::time::timeout(PAIRING_CONFIRMATION_TIMEOUT, receiver).await {
+                Ok(result) => result.map_err(|_| {
+                    HyprConnectError::Transport("pairing confirmation channel closed".to_string())
+                }),
+                Err(_) => {
+                    warn!("pairing confirmation timed out for device {device_id}");
+                    clear_pending_pairing_if_matches(&device_id);
+                    Err(HyprConnectError::Transport(
+                        "pairing confirmation timed out after 60 seconds".to_string(),
+                    ))
+                }
+            }
         })
     }
 }
@@ -151,7 +173,7 @@ pub fn fingerprint(my_pub: &[u8; 32], remote_pub: &[u8; 32]) -> String {
     hasher.update(second);
     let hash = hasher.finalize();
     let code = u32::from_be_bytes([0, hash[0], hash[1], hash[2]]);
-    format!("{:06}", code % 1_000_000)
+    format!("{:06}", code % FINGERPRINT_MODULUS)
 }
 
 pub fn confirm_via_stdin(code: &str, remote_name: &str) -> bool {
@@ -166,4 +188,23 @@ pub fn confirm_via_stdin(code: &str, remote_name: &str) -> bool {
         return false;
     }
     input.trim().eq_ignore_ascii_case("y")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clear_pending_pairing_if_matches, pending_slot, PendingPairing};
+    use tokio::sync::oneshot;
+
+    #[test]
+    fn pending_cleanup_does_not_remove_a_different_pairing() {
+        let (sender, _receiver) = oneshot::channel();
+        *pending_slot().lock().unwrap() = Some(PendingPairing {
+            device_id: "new-device".to_string(),
+            responder: sender,
+        });
+
+        clear_pending_pairing_if_matches("old-device");
+        assert!(pending_slot().lock().unwrap().is_some());
+        pending_slot().lock().unwrap().take();
+    }
 }

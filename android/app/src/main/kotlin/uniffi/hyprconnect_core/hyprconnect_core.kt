@@ -1173,8 +1173,6 @@ sealed class HyprConnectException(message: String): kotlin.Exception(message) {
         
         class DeviceNotFound(message: String) : HyprConnectException(message)
         
-        class NotPaired(message: String) : HyprConnectException(message)
-        
         class PairingInProgress(message: String) : HyprConnectException(message)
         
         class InvalidSettings(message: String) : HyprConnectException(message)
@@ -1195,10 +1193,9 @@ public object FfiConverterTypeHyprConnectError : FfiConverterRustBuffer<HyprConn
         
             return when(buf.getInt()) {
             1 -> HyprConnectException.DeviceNotFound(FfiConverterString.read(buf))
-            2 -> HyprConnectException.NotPaired(FfiConverterString.read(buf))
-            3 -> HyprConnectException.PairingInProgress(FfiConverterString.read(buf))
-            4 -> HyprConnectException.InvalidSettings(FfiConverterString.read(buf))
-            5 -> HyprConnectException.Transport(FfiConverterString.read(buf))
+            2 -> HyprConnectException.PairingInProgress(FfiConverterString.read(buf))
+            3 -> HyprConnectException.InvalidSettings(FfiConverterString.read(buf))
+            4 -> HyprConnectException.Transport(FfiConverterString.read(buf))
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
         }
         
@@ -1214,20 +1211,16 @@ public object FfiConverterTypeHyprConnectError : FfiConverterRustBuffer<HyprConn
                 buf.putInt(1)
                 Unit
             }
-            is HyprConnectException.NotPaired -> {
+            is HyprConnectException.PairingInProgress -> {
                 buf.putInt(2)
                 Unit
             }
-            is HyprConnectException.PairingInProgress -> {
+            is HyprConnectException.InvalidSettings -> {
                 buf.putInt(3)
                 Unit
             }
-            is HyprConnectException.InvalidSettings -> {
-                buf.putInt(4)
-                Unit
-            }
             is HyprConnectException.Transport -> {
-                buf.putInt(5)
+                buf.putInt(4)
                 Unit
             }
         }.let { /* this makes the `when` an expression, which ensures it is exhaustive */ }

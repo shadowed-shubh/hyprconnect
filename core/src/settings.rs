@@ -36,29 +36,18 @@ pub fn config_dir() -> Result<PathBuf> {
         .context("no config directory for this user")
 }
 
-/// Wire-protocol version advertised over mDNS.
-///
-/// Not a user setting: peers reject unknown protocol versions, so this must
-/// only change together with the wire format in `protocol`.
-pub const PROTOCOL_VERSION: u32 = 1;
-
 /// Allowed values for `Settings::device_type` on the wire (protocol v1).
 pub const DEVICE_TYPES: [&str; 2] = ["phone", "desktop"];
 
 /// How incoming pairing requests are confirmed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Confirmation {
     /// Ask the user (stdin for the daemon, UI callback for apps).
+    #[default]
     Prompt,
     /// Accept every pairing request without asking. Only for kiosks/testing.
     Auto,
-}
-
-impl Default for Confirmation {
-    fn default() -> Self {
-        Self::Prompt
-    }
 }
 
 /// Persistent daemon configuration, loaded from `config.toml`.

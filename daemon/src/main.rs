@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::env;
+use std::sync::Arc;
 
 use hyprconnect_core::pairing::{AcceptAllConfirmer, PairingConfirmer, StdinConfirmer};
 use hyprconnect_core::settings::{Confirmation, Settings};
@@ -12,7 +12,10 @@ async fn main() -> anyhow::Result<()> {
     match args.get(1).map(String::as_str) {
         Some("--list-trusted") => {
             for device in hyprconnect_core::trust::trusted_devices()? {
-                println!("{}\t{}\t{}", device.device_id, device.device_name, device.device_type);
+                println!(
+                    "{}\t{}\t{}",
+                    device.device_id, device.device_name, device.device_type
+                );
             }
             return Ok(());
         }

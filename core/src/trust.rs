@@ -19,8 +19,7 @@ struct TrustStore {
 }
 
 fn trust_file_path() -> Result<PathBuf> {
-    let mut dir = crate::settings::config_dir()
-        .context("could not determine config directory")?;
+    let mut dir = crate::settings::config_dir().context("could not determine config directory")?;
     dir.push("hyprconnect");
     fs::create_dir_all(&dir)?;
     dir.push("trusted_devices.json");
@@ -49,7 +48,10 @@ pub fn is_trusted(remote_pub: &[u8; 32]) -> bool {
 
 pub fn is_trusted_device_id(device_id: &str) -> bool {
     let Ok(store) = load() else { return false };
-    store.devices.values().any(|device| device.device_id == device_id)
+    store
+        .devices
+        .values()
+        .any(|device| device.device_id == device_id)
 }
 
 pub fn add_trusted(

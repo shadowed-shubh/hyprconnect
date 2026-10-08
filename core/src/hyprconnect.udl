@@ -28,7 +28,6 @@ dictionary DeviceInfo {
 [Error]
 enum HyprConnectError {
     "DeviceNotFound",
-    "NotPaired",
     "PairingInProgress",
     "InvalidSettings",
     "Transport",

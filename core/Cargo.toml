@@ -8,7 +8,6 @@ crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]
 uniffi = { version = "0.28", features = ["cli"] }
-protocol = { path = "../protocol" }
 
 tokio = { version = "1", features = [
     "net",

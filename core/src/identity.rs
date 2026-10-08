@@ -23,8 +23,7 @@ struct SavedIdentity {
 }
 
 fn identity_file_path() -> Result<PathBuf> {
-    let mut dir = crate::settings::config_dir()
-        .context("could not determine config directory")?;
+    let mut dir = crate::settings::config_dir().context("could not determine config directory")?;
     dir.push("hyprconnect");
     fs::create_dir_all(&dir)?;
     dir.push("identity.json");

@@ -1,17 +1,24 @@
+#![allow(clippy::empty_line_after_doc_comments)]
+
 pub mod discovery;
 pub mod features;
 pub mod identity;
 pub mod noise;
 pub mod packet;
 pub mod pairing;
+pub(crate) mod protocol;
 pub mod session;
 pub mod settings;
 pub mod trust;
 
+#[cfg(test)]
+mod test_support;
+
+use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::net::TcpListener;
-use once_cell::sync::OnceCell;
+use tracing::info;
 
 static FFI_RUNTIME: OnceCell<tokio::runtime::Runtime> = OnceCell::new();
 
@@ -28,8 +35,6 @@ fn ffi_runtime() -> anyhow::Result<&'static tokio::runtime::Runtime> {
 pub enum HyprConnectError {
     #[error("device not found")]
     DeviceNotFound,
-    #[error("not paired with this device")]
-    NotPaired,
     #[error("another pairing is already in progress")]
     PairingInProgress,
     #[error("invalid settings: {0}")]
@@ -57,8 +62,8 @@ pub fn set_config_dir(path: String) -> Result<(), HyprConnectError> {
 }
 
 pub async fn pair(device_id: String) -> Result<(), HyprConnectError> {
-    let runtime = ffi_runtime()
-        .map_err(|error| HyprConnectError::Transport(format!("{error:#}")))?;
+    let runtime =
+        ffi_runtime().map_err(|error| HyprConnectError::Transport(format!("{error:#}")))?;
     runtime
         .block_on(pair_impl(device_id))
         .map_err(|error| HyprConnectError::Transport(error.to_string()))
@@ -71,8 +76,8 @@ async fn pair_impl(device_id: String) -> anyhow::Result<()> {
 
     // mDNS can publish the service before the host A record arrives. Give
     // the resolver a short window rather than failing on the first tap.
-    let device = discovery::get_discovered(&device_id)
-        .ok_or_else(|| anyhow::anyhow!("device not found"))?;
+    let device =
+        discovery::get_discovered(&device_id).ok_or_else(|| anyhow::anyhow!("device not found"))?;
     let device = {
         let mut current = device;
         for _ in 0..10 {
@@ -194,18 +199,19 @@ pub async fn start_discovery_with_settings(
     let secret = device_identity.x25519_secret.to_bytes();
     let my_pub = device_identity.x25519_public;
 
-    println!("device_id: {}", device_identity.device_id);
-    println!("device_name: {}", settings.device_name);
-    println!(
-        "listening on {}:{}",
-        settings.listen_host, real_port
+    info!(
+        device_id = %device_identity.device_id,
+        device_name = %settings.device_name,
+        listen_host = %settings.listen_host,
+        listen_port = real_port,
+        "daemon listening"
     );
 
     let discovery_identity = discovery::DiscoveryIdentity {
         device_id: device_identity.device_id,
         device_name: settings.device_name.clone(),
         device_type: settings.device_type.clone(),
-        protocol_version: settings::PROTOCOL_VERSION,
+        protocol_version: protocol::PROTOCOL_VERSION,
         port: real_port,
         auto_pair: settings.auto_pair,
     };
@@ -219,40 +225,54 @@ pub async fn start_discovery_with_settings(
 
     tokio::spawn(async move {
         loop {
-            let Ok((mut stream, addr)) = listener.accept().await else {
+            let Ok((stream, addr)) = listener.accept().await else {
                 continue;
             };
             tracing::info!("accepted connection from {}", addr);
+            let connection_confirmer = confirmer.clone();
 
-            match noise::handshake_as_responder(&mut stream, &secret).await {
-                Ok((transport, remote_pub)) => {
-                    tracing::info!("Noise handshake succeeded (as responder)");
-                    let Some(peer) = discovery::get_discovered_by_address(&addr.ip().to_string())
-                    else {
-                        tracing::warn!(
-                            "incoming peer {} has no discovered metadata; closing connection",
-                            addr
-                        );
-                        continue;
-                    };
+            tokio::spawn(async move {
+                let mut stream = stream;
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    noise::handshake_as_responder(&mut stream, &secret),
+                )
+                .await
+                {
+                    Ok(Ok((transport, remote_pub))) => {
+                        tracing::info!("Noise handshake succeeded (as responder)");
+                        // Noise authenticates the peer. mDNS only supplies the display and
+                        // routing metadata needed by the session; wait briefly for that
+                        // metadata instead of treating its absence as authentication failure.
+                        let Some(peer) =
+                            discovery::wait_for_discovered_by_address(&addr.ip().to_string()).await
+                        else {
+                            tracing::warn!(
+                                "incoming peer {} has no discovered metadata; closing connection",
+                                addr
+                            );
+                            return;
+                        };
 
-                    if let Err(error) = session::run_session(
-                        stream,
-                        transport,
-                        my_pub,
-                        remote_pub,
-                        &peer.device_id,
-                        &peer.device_name,
-                        &peer.device_type,
-                        confirmer.clone(),
-                    )
-                    .await
-                    {
-                        tracing::warn!("session error: {error:#}");
+                        if let Err(error) = session::run_session(
+                            stream,
+                            transport,
+                            my_pub,
+                            remote_pub,
+                            &peer.device_id,
+                            &peer.device_name,
+                            &peer.device_type,
+                            connection_confirmer,
+                        )
+                        .await
+                        {
+                            tracing::warn!("session error: {error:#}");
+                        }
                     }
+                    Ok(Err(error)) => tracing::warn!("handshake failed: {error:#}"),
+                    Err(_) => tracing::warn!("handshake timed out after 10 seconds"),
                 }
-                Err(error) => tracing::warn!("handshake failed: {error:#}"),
-            }
+            });
         }
     });
 
