@@ -40,7 +40,7 @@ pub fn get_discovered(device_id: &str) -> Option<DiscoveredDevice> {
     discovered_slot().lock().unwrap().get(device_id).cloned()
 }
 
-pub fn get_discovered_by_address(address: &str) -> Option<DiscoveredDevice> {
+fn get_discovered_by_address(address: &str) -> Option<DiscoveredDevice> {
     discovered_slot()
         .lock()
         .unwrap()

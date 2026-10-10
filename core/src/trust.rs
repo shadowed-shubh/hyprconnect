@@ -79,20 +79,15 @@ pub fn trusted_devices() -> Result<Vec<TrustedDevice>> {
 
 pub fn remove_trusted(device_id: &str) -> Result<bool> {
     let mut store = load()?;
-    let keys: Vec<String> = store
+    let before = store.devices.len();
+    store
         .devices
-        .iter()
-        .filter(|(_, device)| device.device_id == device_id)
-        .map(|(key, _)| key.clone())
-        .collect();
+        .retain(|_, device| device.device_id != device_id);
 
-    if keys.is_empty() {
+    if store.devices.len() == before {
         return Ok(false);
     }
 
-    for key in keys {
-        store.devices.remove(&key);
-    }
     save(&store)?;
     Ok(true)
 }

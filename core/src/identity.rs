@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use ed25519_dalek::{SigningKey, VerifyingKey};
@@ -30,6 +30,26 @@ fn identity_file_path() -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// Write the identity file with owner-only permissions; it holds the private key.
+fn write_private(path: &Path, contents: &str) -> Result<()> {
+    fs::write(path, contents)?;
+    apply_private_permissions(path)?;
+    Ok(())
+}
+
+/// Tighten an existing identity file to owner-only permissions. Used on load so
+/// files created before this fix (default permissions) get repaired.
+fn apply_private_permissions(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if fs::metadata(path)?.permissions().mode() & 0o777 != 0o600 {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    Ok(())
+}
+
 fn generate(device_id: &str) -> Result<DeviceIdentity> {
     let mut ed_secret_bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut OsRng, &mut ed_secret_bytes);
@@ -52,6 +72,7 @@ pub fn load_or_generate() -> Result<DeviceIdentity> {
     let path = identity_file_path()?;
 
     if path.exists() {
+        apply_private_permissions(&path)?;
         let text = fs::read_to_string(&path)?;
         let saved: SavedIdentity = serde_json::from_str(&text)?;
 
@@ -84,7 +105,7 @@ pub fn load_or_generate() -> Result<DeviceIdentity> {
         ed25519_secret_hex: hex::encode(identity.ed25519_signing.to_bytes()),
         x25519_secret_hex: hex::encode(identity.x25519_secret.to_bytes()),
     };
-    fs::write(&path, serde_json::to_string_pretty(&saved)?)?;
+    write_private(&path, &serde_json::to_string_pretty(&saved)?)?;
 
     Ok(identity)
 }

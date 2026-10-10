@@ -30,7 +30,9 @@ The stack is designed around a simple, debuggable, own-protocol design:
 
 - **Noise Protocol Framework** (`Noise_XX`) for encryption — long-term
   Ed25519/X25519 keypairs, pair once, trust forever (the model WireGuard
-  and Syncthing use). No TLS, no X.509 certificates.
+  and Syncthing use). X25519 is the static key used by the current Noise
+  handshake; Ed25519 remains part of the persisted device identity for the
+  protocol's identity/signing architecture. No TLS or X.509 certificates.
 - **mDNS/DNS-SD discovery** (`_hyprconnect._tcp.local`)
 - **Secure pairing** with a human-confirmed fingerprint code
   (trust-on-first-use, like SSH)
@@ -50,6 +52,17 @@ hyprconnect/
 The `core` crate is shared by both platforms. On Android it's reused
 as-is via **UniFFI** bindings (no Kotlin reimplementation of the wire
 protocol).
+
+### Identity and trust
+
+Each installation stores a persistent `identity.json` containing the device
+ID, Ed25519 identity key, and X25519 Noise key. The current pairing fingerprint
+and trust store use the authenticated X25519 public key. Ed25519 signing or a
+separate identity-signature exchange is intentionally reserved for a future
+protocol revision; retaining the key now keeps the implementation aligned with
+the protocol specification without inventing an unused wire message.
+
+New identity files are written with owner-only permissions (`0600` on Unix).
 
 ## Status
 

@@ -11,9 +11,6 @@ pub mod session;
 pub mod settings;
 pub mod trust;
 
-#[cfg(test)]
-mod test_support;
-
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
 use thiserror::Error;

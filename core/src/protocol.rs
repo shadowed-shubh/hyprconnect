@@ -12,7 +12,6 @@ pub(crate) const PROTOCOL_VERSION: u32 = 1;
 pub(crate) const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
 pub(crate) const FINGERPRINT_MODULUS: u32 = 1_000_000;
 pub(crate) const FRAME_LENGTH_BYTES: usize = 2;
-pub(crate) const MAX_FRAME_LENGTH: usize = u16::MAX as usize;
 
 pub(crate) fn protocol_version_is_compatible(value: Option<&str>) -> bool {
     value.and_then(|version| version.parse::<u32>().ok()) == Some(PROTOCOL_VERSION)
